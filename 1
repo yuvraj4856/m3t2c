@@ -1,0 +1,75 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <CL/cl.h>
+
+#define N 100000000
+
+int main() {
+    cl_device_id device_id;
+    cl_context context;
+    cl_command_queue command_queue;
+    cl_mem memobj;
+    cl_program program;
+    cl_kernel kernel;
+    cl_platform_id platform_id;
+    cl_uint ret_num_devices;
+    cl_uint ret_num_platforms;
+    cl_int ret;
+
+    int i;
+    float data = (float) malloc(N * sizeof(float));
+    for (i = 0; i < N; i++) {
+        data[i] = sin(i * 0.01);
+    }
+
+    float result = (float) malloc(sizeof(float));
+    *result = 0.0;
+
+    // Get the first available platform
+    ret = clGetPlatformIDs(1, &platform_id, &ret_num_platforms);
+
+    // Get the first available device
+    ret = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, 1, &device_id, &ret_num_devices);
+
+    // Create a context and command queue
+    context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &ret);
+    command_queue = clCreateCommandQueue(context, device_id, 0, &ret);
+
+    // Create a memory buffer on the device and transfer data to it
+    memobj = clCreateBuffer(context, CL_MEM_READ_ONLY, N * sizeof(float), NULL, &ret);
+    ret = clEnqueueWriteBuffer(command_queue, memobj, CL_TRUE, 0, N * sizeof(float), data, 0, NULL, NULL);
+
+    // Create a kernel program from source code
+    const char *source = "_kernel void sum(_global float *data, __global float *result) { int i = get_global_id(0); atomic_add(result, data[i]); }";
+    program = clCreateProgramWithSource(context, 1, &source, NULL, &ret);
+    ret = clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
+
+    // Create a kernel object and set arguments
+    kernel = clCreateKernel(program, "sum", &ret);
+    ret = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&memobj);
+    ret = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *)&result);
+
+    // Execute the kernel on the device
+    size_t global_item_size = N;
+    size_t local_item_size = 64;
+    ret = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_item_size, &local_item_size, 0, NULL, NULL);
+
+    // Read the result from the device and print it
+    ret = clEnqueueReadBuffer(command_queue, memobj, CL_TRUE, 0, sizeof(float), result, 0, NULL, NULL);
+    printf("Result: %f\n", *result);
+
+    // Clean up OpenCL objects and memory buffers
+    ret = clFlush(command_queue);
+    ret = clFinish(command_queue);
+    ret = clReleaseKernel(kernel);
+   
+    ret = clReleaseProgram(program);
+    ret = clReleaseMemObject(memobj);
+    ret = clReleaseCommandQueue(command_queue);
+    ret = clReleaseContext(context);
+    free(data);
+    free(result);
+
+    return 0;
+}
